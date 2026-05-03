@@ -14,6 +14,29 @@
 
   /* ---------- 1. Storage ---------- */
   const STORAGE_KEY = 'splitr_data';
+  const CURRENCY_KEY = 'splitr_currency';
+
+  // Display-only currency list. No conversion is ever performed —
+  // changing this only swaps the symbol shown in the UI.
+  const CURRENCIES = [
+    { code: 'INR', symbol: '₹', name: 'Indian Rupee' },
+    { code: 'USD', symbol: '$', name: 'US Dollar' },
+    { code: 'EUR', symbol: '€', name: 'Euro' },
+    { code: 'GBP', symbol: '£', name: 'British Pound' },
+  ];
+  const DEFAULT_CURRENCY = 'INR';
+
+  function getCurrency() {
+    let code;
+    try { code = localStorage.getItem(CURRENCY_KEY); } catch { code = null; }
+    return CURRENCIES.find(c => c.code === code)
+        || CURRENCIES.find(c => c.code === DEFAULT_CURRENCY);
+  }
+
+  function setCurrency(code) {
+    if (!CURRENCIES.some(c => c.code === code)) return;
+    try { localStorage.setItem(CURRENCY_KEY, code); } catch { /* ignore */ }
+  }
 
   const Store = {
     _data: { groups: [] },
@@ -281,7 +304,7 @@
           el('div', { class: 'body' },
             el('div', { class: 'title' }, g.name),
             el('div', { class: 'subtitle' },
-              `${g.members.length} member${g.members.length === 1 ? '' : 's'} · ${formatMoney(total)} total`),
+              `${g.members.length} member${g.members.length === 1 ? '' : 's'} · ${formatAmount(total)} total`),
           ),
           chevron(),
         );
@@ -315,7 +338,7 @@
     // Summary
     const summary = el('div', { class: 'card group-summary' },
       el('span', { class: 'meta' }, 'Total spent'),
-      el('span', { class: 'total' }, formatMoney(totalSpent(group))),
+      el('span', { class: 'total' }, formatAmount(totalSpent(group))),
       el('span', { class: 'meta' },
         `${group.expenses.length} expense${group.expenses.length === 1 ? '' : 's'} · ${group.members.length} member${group.members.length === 1 ? '' : 's'}`),
     );
@@ -412,7 +435,7 @@
           el('div', { class: 'meta' },
             `Paid by ${payer ? payer.name : 'unknown'} · ${formatDate(e.createdAt)}`),
         ),
-        el('div', { class: 'amt' }, formatMoney(e.amount)),
+        el('div', { class: 'amt' }, formatAmount(e.amount)),
       );
       const del = el('button', { class: 'del', 'aria-label': 'Delete expense', title: 'Delete' });
       del.innerHTML =
@@ -504,9 +527,9 @@
       const v = balances[m.id] || 0;
       const cls = v > 0.005 ? 'positive' : (v < -0.005 ? 'negative' : 'zero');
       const label = v > 0.005
-        ? `gets back ${formatMoney(v)}`
+        ? `gets back ${formatAmount(v)}`
         : v < -0.005
-          ? `owes ${formatMoney(-v)}`
+          ? `owes ${formatAmount(-v)}`
           : 'settled up';
       const row = el('div', { class: `balance-row ${cls}` });
       row.append(
@@ -530,7 +553,7 @@
           el('strong', {}, from ? from.name : '?'),
           el('span', { class: 'arrow' }, '→'),
           el('strong', {}, to ? to.name : '?'),
-          el('span', { class: 'amt' }, formatMoney(t.amount)),
+          el('span', { class: 'amt' }, formatAmount(t.amount)),
         );
         slist.appendChild(row);
       }
@@ -587,7 +610,7 @@
       if (amt > 0) {
         const share = amt / group.members.length;
         sharePreview.textContent =
-          `Each member's share: ${formatMoney(share)} (across ${group.members.length})`;
+          `Each member's share: ${formatAmount(share)} (across ${group.members.length})`;
       } else {
         sharePreview.textContent =
           `Splits equally across ${group.members.length} member${group.members.length === 1 ? '' : 's'}.`;
@@ -687,30 +710,26 @@
       .toUpperCase() || '?';
   }
 
-  // Currency: try locale; fall back to symbol-prefixed string.
-  const _money = (() => {
+  // Display-only money formatting: prefixes the selected currency
+  // symbol. Whole numbers render without decimals (e.g. ₹500),
+  // fractional values render with up to 2 decimals (e.g. $20.50).
+  // No conversion is ever applied to stored amounts.
+  function formatAmount(amount) {
+    const c = getCurrency();
+    const num = Number(amount) || 0;
+    const abs = Math.abs(num);
+    const isWhole = Math.abs(abs - Math.round(abs)) < 0.005;
+    let formatted;
     try {
-      return new Intl.NumberFormat(undefined, {
-        style: 'currency',
-        currency: detectCurrency(),
+      formatted = abs.toLocaleString(undefined, {
+        minimumFractionDigits: isWhole ? 0 : 2,
         maximumFractionDigits: 2,
       });
     } catch {
-      return null;
+      formatted = isWhole ? String(Math.round(abs)) : abs.toFixed(2);
     }
-  })();
-  function detectCurrency() {
-    try {
-      const locale = navigator.language || 'en-US';
-      const region = locale.split('-')[1];
-      const map = { US: 'USD', GB: 'GBP', IN: 'INR', EU: 'EUR', DE: 'EUR', FR: 'EUR', ES: 'EUR', IT: 'EUR', JP: 'JPY', CN: 'CNY', AU: 'AUD', CA: 'CAD' };
-      return map[region] || 'USD';
-    } catch { return 'USD'; }
-  }
-  function formatMoney(n) {
-    const num = Number(n) || 0;
-    if (_money) return _money.format(num);
-    return `$${num.toFixed(2)}`;
+    const sign = num < 0 ? '-' : '';
+    return `${sign}${c.symbol}${formatted}`;
   }
 
   function formatDate(ts) {
@@ -751,13 +770,43 @@
     }
   }
 
+  // Populate the header currency dropdown and re-render on change.
+  function initCurrencySelector() {
+    const select = document.getElementById('currencySelect');
+    if (!select) return;
+    const active = getCurrency();
+    select.innerHTML = '';
+    for (const c of CURRENCIES) {
+      const opt = document.createElement('option');
+      opt.value = c.code;
+      opt.textContent = `${c.symbol} ${c.code}`;
+      opt.title = c.name;
+      select.appendChild(opt);
+    }
+    // Explicitly set the value AFTER appending so the dropdown
+    // mirrors the active currency regardless of insertion order.
+    select.value = active.code;
+    // Also persist the resolved code so storage and UI agree.
+    setCurrency(active.code);
+
+    select.addEventListener('change', () => {
+      setCurrency(select.value);
+      render(); // refresh all amounts in place — no full reload
+    });
+  }
+
   Store.load();
   loadVersion();
+  initCurrencySelector();
   window.addEventListener('hashchange', render);
   window.addEventListener('storage', (e) => {
     // Sync across tabs.
     if (e.key === STORAGE_KEY) {
       Store.load();
+      render();
+    } else if (e.key === CURRENCY_KEY) {
+      const sel = document.getElementById('currencySelect');
+      if (sel) sel.value = getCurrency().code;
       render();
     }
   });

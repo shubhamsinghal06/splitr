@@ -104,6 +104,58 @@ button { font-family: inherit; }
 
 .header-spacer { width: 40px; }
 
+/* Currency selector — subtle pill on the right of the header.
+   The native <select> sits on top of the pill so the system
+   picker opens reliably; the caret is purely decorative. */
+.currency-selector {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px 24px 6px 10px; /* room for the caret on the right */
+  border-radius: 999px;
+  background: var(--surface-2);
+  color: var(--text);
+  font-size: 13px;
+  font-weight: 600;
+  transition: background 0.15s ease, color 0.15s ease;
+  min-width: 0;
+  line-height: 1;
+}
+.currency-selector:hover { background: var(--primary-soft); color: var(--primary); }
+
+.currency-selector .caret {
+  position: absolute;
+  right: 8px;
+  top: 50%;
+  transform: translateY(-50%);
+  pointer-events: none;
+  opacity: 0.7;
+}
+
+.currency-selector select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background: transparent;
+  border: none;
+  outline: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 600;
+  padding: 0;
+  margin: 0;
+  cursor: pointer;
+  /* Native picker UI is left to the browser. */
+}
+.currency-selector select:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+/* Remove iOS Safari inner styling */
+.currency-selector select::-ms-expand { display: none; }
+
 /* ---------- Layout ---------- */
 .app-main {
   max-width: 720px;
