@@ -345,6 +345,12 @@ button { font-family: inherit; }
   flex-direction: column;
   gap: 4px;
 }
+.group-summary .summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
 .group-summary .total {
   font-size: 28px;
   font-weight: 700;
@@ -353,6 +359,27 @@ button { font-family: inherit; }
   color: var(--text-muted);
   font-size: 13px;
 }
+
+/* Subtle pencil button for inline edits (group/member). */
+.pencil-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--text-muted);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.pencil-btn:hover {
+  background: var(--primary-soft);
+  color: var(--primary);
+}
+.pencil-btn:active { transform: scale(0.96); }
 
 /* Tabs */
 .tabs {
@@ -386,13 +413,27 @@ button { font-family: inherit; }
 .chip {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px 10px 6px 8px;
+  gap: 4px;
+  padding: 4px 8px 4px 4px;
   background: var(--surface-2);
   border: 1px solid var(--border);
   border-radius: 999px;
   font-size: 14px;
 }
+.chip .chip-name {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 2px 4px 2px 4px;
+  background: transparent;
+  border: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  border-radius: 999px;
+  transition: background 0.15s ease, color 0.15s ease;
+}
+.chip .chip-name:hover { color: var(--primary); }
 .chip .chip-avatar {
   width: 22px;
   height: 22px;
@@ -411,11 +452,13 @@ button { font-family: inherit; }
   border: none;
   color: var(--text-muted);
   cursor: pointer;
-  font-size: 16px;
+  font-size: 18px;
   line-height: 1;
-  padding: 0 2px;
+  padding: 0 4px;
+  border-radius: 999px;
+  transition: color 0.15s ease, background 0.15s ease;
 }
-.chip .chip-x:hover { color: var(--danger); }
+.chip .chip-x:hover { color: var(--danger); background: var(--danger-soft); }
 
 /* Add member inline */
 .inline-add {
@@ -453,15 +496,26 @@ button { font-family: inherit; }
   font-variant-numeric: tabular-nums;
   margin-right: 4px;
 }
-.expense .del {
+.expense .row-action {
   background: transparent;
   border: none;
   color: var(--text-muted);
   cursor: pointer;
   padding: 6px;
   border-radius: 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.15s ease, color 0.15s ease;
 }
-.expense .del:hover { color: var(--danger); background: var(--danger-soft); }
+.expense .row-action.edit:hover {
+  color: var(--primary);
+  background: var(--primary-soft);
+}
+.expense .row-action.del:hover {
+  color: var(--danger);
+  background: var(--danger-soft);
+}
 
 /* Balances */
 .balance-row {

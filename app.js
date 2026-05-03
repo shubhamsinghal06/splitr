@@ -85,6 +85,16 @@
       return group;
     },
 
+    updateGroup(id, name) {
+      const g = this.getGroup(id);
+      if (!g) return false;
+      const trimmed = (name || '').trim();
+      if (!trimmed) return false;
+      g.name = trimmed;
+      this.save();
+      return true;
+    },
+
     deleteGroup(id) {
       this._data.groups = this._data.groups.filter(g => g.id !== id);
       this.save();
@@ -97,6 +107,23 @@
       g.members.push(member);
       this.save();
       return member;
+    },
+
+    updateMember(groupId, memberId, name) {
+      const g = this.getGroup(groupId);
+      if (!g) return false;
+      const m = g.members.find(x => x.id === memberId);
+      if (!m) return false;
+      const trimmed = (name || '').trim();
+      if (!trimmed) return false;
+      // Reject duplicates (case-insensitive), excluding self.
+      const dup = g.members.some(
+        x => x.id !== memberId && x.name.toLowerCase() === trimmed.toLowerCase(),
+      );
+      if (dup) return false;
+      m.name = trimmed;
+      this.save();
+      return true;
     },
 
     deleteMember(groupId, memberId) {
@@ -125,6 +152,18 @@
       g.expenses.push(expense);
       this.save();
       return expense;
+    },
+
+    updateExpense(groupId, expenseId, { description, amount, paidBy }) {
+      const g = this.getGroup(groupId);
+      if (!g) return false;
+      const e = g.expenses.find(x => x.id === expenseId);
+      if (!e) return false;
+      if (description != null) e.description = String(description).trim();
+      if (amount != null) e.amount = Number(amount);
+      if (paidBy != null) e.paidBy = paidBy;
+      this.save();
+      return true;
     },
 
     deleteExpense(groupId, expenseId) {
@@ -193,9 +232,10 @@
 
   /* ---------- 3. Router ---------- */
   // Routes:
-  //   #/                    -> groups list
-  //   #/group/:id           -> group detail
-  //   #/group/:id/add       -> add expense form
+  //   #/                              -> groups list
+  //   #/group/:id                     -> group detail
+  //   #/group/:id/add                 -> add expense form
+  //   #/group/:id/edit/:expenseId     -> edit expense form
 
   const Router = {
     parse() {
@@ -203,7 +243,12 @@
       const parts = hash.split('/').filter(Boolean);
       if (parts.length === 0) return { name: 'groups' };
       if (parts[0] === 'group' && parts[1]) {
-        if (parts[2] === 'add') return { name: 'addExpense', groupId: parts[1] };
+        if (parts[2] === 'add') {
+          return { name: 'expenseForm', groupId: parts[1], expenseId: null };
+        }
+        if (parts[2] === 'edit' && parts[3]) {
+          return { name: 'expenseForm', groupId: parts[1], expenseId: parts[3] };
+        }
         return { name: 'group', groupId: parts[1] };
       }
       return { name: 'groups' };
@@ -241,8 +286,8 @@
         return renderGroups();
       case 'group':
         return renderGroupDetail(route.groupId);
-      case 'addExpense':
-        return renderAddExpense(route.groupId);
+      case 'expenseForm':
+        return renderExpenseForm(route.groupId, route.expenseId);
       default:
         return renderGroups();
     }
@@ -336,8 +381,22 @@
     const wrap = el('div');
 
     // Summary
+    const editGroupBtn = pencilButton('Edit group name', () => {
+      const next = window.prompt('Group name', group.name);
+      if (next == null) return;
+      const trimmed = next.trim();
+      if (!trimmed) { toast('Name cannot be empty'); return; }
+      if (trimmed === group.name) return;
+      if (Store.updateGroup(group.id, trimmed)) {
+        toast('Group renamed');
+        render();
+      }
+    });
     const summary = el('div', { class: 'card group-summary' },
-      el('span', { class: 'meta' }, 'Total spent'),
+      el('div', { class: 'summary-head' },
+        el('span', { class: 'meta' }, 'Total spent'),
+        editGroupBtn,
+      ),
       el('span', { class: 'total' }, formatAmount(totalSpent(group))),
       el('span', { class: 'meta' },
         `${group.expenses.length} expense${group.expenses.length === 1 ? '' : 's'} · ${group.members.length} member${group.members.length === 1 ? '' : 's'}`),
@@ -437,7 +496,22 @@
         ),
         el('div', { class: 'amt' }, formatAmount(e.amount)),
       );
-      const del = el('button', { class: 'del', 'aria-label': 'Delete expense', title: 'Delete' });
+      const editBtn = el('button', {
+        class: 'row-action edit',
+        'aria-label': 'Edit expense',
+        title: 'Edit',
+      });
+      editBtn.innerHTML =
+        '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+      editBtn.addEventListener('click', () => {
+        Router.go(`/group/${group.id}/edit/${e.id}`);
+      });
+
+      const del = el('button', {
+        class: 'row-action del',
+        'aria-label': 'Delete expense',
+        title: 'Delete',
+      });
       del.innerHTML =
         '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>';
       del.addEventListener('click', () => {
@@ -447,7 +521,7 @@
           render();
         }
       });
-      row.appendChild(del);
+      row.append(editBtn, del);
       list.appendChild(row);
     }
     wrap.appendChild(list);
@@ -464,18 +538,45 @@
       const chips = el('div', { class: 'chips' });
       for (const m of group.members) {
         const chip = el('div', { class: 'chip' });
-        chip.append(
+        const nameBtn = el('button', {
+          class: 'chip-name',
+          type: 'button',
+          title: 'Click to rename',
+          'aria-label': `Rename ${m.name}`,
+        });
+        nameBtn.append(
           el('span', { class: 'chip-avatar' }, initials(m.name)),
           el('span', {}, m.name),
         );
-        const x = el('button', { class: 'chip-x', 'aria-label': `Remove ${m.name}`, title: 'Remove' }, '×');
-        x.addEventListener('click', () => {
+        nameBtn.addEventListener('click', () => {
+          const next = window.prompt('Member name', m.name);
+          if (next == null) return;
+          const trimmed = next.trim();
+          if (!trimmed) { toast('Name cannot be empty'); return; }
+          if (trimmed === m.name) return;
+          if (Store.updateMember(group.id, m.id, trimmed)) {
+            toast('Member renamed');
+            render();
+          } else {
+            toast('Member already exists');
+          }
+        });
+
+        const x = el('button', {
+          class: 'chip-x',
+          type: 'button',
+          'aria-label': `Remove ${m.name}`,
+          title: 'Remove',
+        }, '×');
+        x.addEventListener('click', (ev) => {
+          ev.stopPropagation();
           if (confirm(`Remove ${m.name} from this group?`)) {
             Store.deleteMember(group.id, m.id);
             render();
           }
         });
-        chip.appendChild(x);
+
+        chip.append(nameBtn, x);
         chips.appendChild(chip);
       }
       wrap.appendChild(chips);
@@ -563,21 +664,32 @@
     return wrap;
   }
 
-  /* --- Add expense form --- */
-  function renderAddExpense(groupId) {
+  /* --- Add / Edit expense form ---
+   * If expenseId is provided, the form is in "edit" mode: fields are
+   * prefilled and submit calls Store.updateExpense. Otherwise it's
+   * "add" mode and submit calls Store.addExpense. */
+  function renderExpenseForm(groupId, expenseId) {
     const group = Store.getGroup(groupId);
     if (!group) {
       setHeader('Not found', { showBack: true });
       app.appendChild(emptyState('Group not found', '', '🤔'));
       return;
     }
+    const editing = expenseId
+      ? group.expenses.find(e => e.id === expenseId) || null
+      : null;
+    if (expenseId && !editing) {
+      setHeader('Not found', { showBack: true });
+      app.appendChild(emptyState('Expense not found', 'It may have been deleted.', '🤔'));
+      return;
+    }
     if (group.members.length === 0) {
-      setHeader('Add expense', { showBack: true });
+      setHeader(editing ? 'Edit expense' : 'Add expense', { showBack: true });
       app.appendChild(emptyState('No members', 'Add members before creating an expense.', '👤'));
       return;
     }
 
-    setHeader('Add expense', { showBack: true });
+    setHeader(editing ? 'Edit expense' : 'Add expense', { showBack: true });
 
     const card = el('div', { class: 'card' });
     const form = el('form', { class: 'form' });
@@ -597,9 +709,15 @@
       required: 'true',
     });
     const paidBySelect = el('select', { required: 'true' });
-    paidBySelect.appendChild(el('option', { value: '', disabled: 'true', selected: 'true' }, 'Select payer'));
+    paidBySelect.appendChild(el('option', { value: '', disabled: 'true' }, 'Select payer'));
     for (const m of group.members) {
       paidBySelect.appendChild(el('option', { value: m.id }, m.name));
+    }
+
+    if (editing) {
+      descInput.value = editing.description;
+      amountInput.value = String(editing.amount);
+      paidBySelect.value = editing.paidBy;
     }
 
     const sharePreview = el('div', { class: 'hint' },
@@ -617,6 +735,7 @@
       }
     };
     amountInput.addEventListener('input', updatePreview);
+    if (editing) updatePreview();
 
     form.append(
       el('div', { class: 'field' },
@@ -634,7 +753,8 @@
       ),
       el('div', { class: 'row' },
         el('button', { type: 'button', class: 'btn btn-ghost' }, 'Cancel'),
-        el('button', { type: 'submit', class: 'btn btn-primary' }, 'Add expense'),
+        el('button', { type: 'submit', class: 'btn btn-primary' },
+          editing ? 'Save changes' : 'Add expense'),
       ),
     );
 
@@ -650,14 +770,19 @@
       if (!Number.isFinite(amount) || amount <= 0) { toast('Enter a valid amount'); amountInput.focus(); return; }
       if (!paidBy) { toast('Select who paid'); paidBySelect.focus(); return; }
 
-      Store.addExpense(group.id, { description, amount, paidBy });
-      toast('Expense added');
+      if (editing) {
+        Store.updateExpense(group.id, editing.id, { description, amount, paidBy });
+        toast('Expense updated');
+      } else {
+        Store.addExpense(group.id, { description, amount, paidBy });
+        toast('Expense added');
+      }
       Router.go(`/group/${group.id}`);
     });
 
     card.appendChild(form);
     app.appendChild(card);
-    descInput.focus();
+    if (!editing) descInput.focus();
   }
 
   /* ---------- 5. UI utils ---------- */
@@ -693,6 +818,18 @@
     span.innerHTML =
       '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>';
     return span;
+  }
+
+  function pencilButton(label, onClick) {
+    const btn = document.createElement('button');
+    btn.type = 'button';
+    btn.className = 'pencil-btn';
+    btn.title = label;
+    btn.setAttribute('aria-label', label);
+    btn.innerHTML =
+      '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4L16.5 3.5z"/></svg>';
+    btn.addEventListener('click', onClick);
+    return btn;
   }
 
   function uid() {
