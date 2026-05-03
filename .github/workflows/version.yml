@@ -1,0 +1,88 @@
+name: Auto bump version
+
+on:
+  push:
+    branches: [main]
+    # Don't loop when this workflow itself updates version.json.
+    paths-ignore:
+      - 'version.json'
+      - '.github/workflows/version.yml'
+
+permissions:
+  contents: write
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: false
+
+jobs:
+  bump:
+    # Extra guard: skip if the commit was made by this workflow or
+    # explicitly opts out via "[skip ci]" / "[skip version]".
+    if: >-
+      github.actor != 'github-actions[bot]' &&
+      !contains(github.event.head_commit.message, '[skip ci]') &&
+      !contains(github.event.head_commit.message, '[skip version]')
+
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          fetch-depth: 0
+
+      - name: Bump version (patch -> minor -> major, capped at 9)
+        id: bump
+        run: |
+          set -euo pipefail
+
+          if [ ! -f version.json ]; then
+            echo '{"version":"0.0.0"}' > version.json
+          fi
+
+          current=$(jq -r '.version' version.json)
+          if ! [[ "$current" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid version in version.json: $current" >&2
+            exit 1
+          fi
+
+          IFS='.' read -r major minor patch <<< "$current"
+
+          patch=$((patch + 1))
+          if [ "$patch" -gt 9 ]; then
+            patch=0
+            minor=$((minor + 1))
+          fi
+          if [ "$minor" -gt 9 ]; then
+            minor=0
+            major=$((major + 1))
+          fi
+
+          new="${major}.${minor}.${patch}"
+          echo "Bumping ${current} -> ${new}"
+
+          jq --arg v "$new" '.version = $v' version.json > version.json.tmp
+          mv version.json.tmp version.json
+
+          {
+            echo "previous=${current}"
+            echo "new=${new}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Commit and push
+        run: |
+          set -euo pipefail
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          if git diff --quiet -- version.json; then
+            echo "No version change to commit."
+            exit 0
+          fi
+
+          git add version.json
+          git commit -m "chore(release): bump version to ${{ steps.bump.outputs.new }} [skip ci]"
+          git push
