@@ -2,7 +2,7 @@
  * Cache-first for the small app shell so it works fully offline.
  * Bump CACHE_VERSION whenever any shipped asset changes. */
 
-const CACHE_VERSION = 'v5';
+const CACHE_VERSION = 'v6';
 const CACHE_NAME = `splitr-${CACHE_VERSION}`;
 
 const APP_SHELL = [

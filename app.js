@@ -100,6 +100,52 @@
       this.save();
     },
 
+    // Insert a sanitised group (or replace an existing one with the same id).
+    // Used by the import flow when the user opts to overwrite their copy.
+    replaceGroup(group) {
+      const clean = sanitizeImportedGroup(group);
+      if (!clean) return null;
+      const idx = this._data.groups.findIndex(g => g.id === clean.id);
+      if (idx >= 0) this._data.groups[idx] = clean;
+      else this._data.groups.push(clean);
+      this.save();
+      return clean;
+    },
+
+    // Import a sanitised group as a brand-new copy: regenerates the
+    // group id and member ids (remapping `paidBy` references), so it
+    // never collides with the existing local copy.
+    addGroupAsCopy(group) {
+      const clean = sanitizeImportedGroup(group);
+      if (!clean) return null;
+
+      const memberIdMap = Object.create(null);
+      const newMembers = clean.members.map(m => {
+        const newId = uid();
+        memberIdMap[m.id] = newId;
+        return { id: newId, name: m.name };
+      });
+      const newExpenses = clean.expenses.map(e => ({
+        id: uid(),
+        description: e.description,
+        amount: e.amount,
+        // If the original payer was remapped, follow the new id.
+        // Otherwise keep the original (UI tolerates "unknown").
+        paidBy: memberIdMap[e.paidBy] || e.paidBy,
+        createdAt: e.createdAt,
+      }));
+      const copy = {
+        id: uid(),
+        name: `${clean.name} (imported)`,
+        members: newMembers,
+        expenses: newExpenses,
+        createdAt: Date.now(),
+      };
+      this._data.groups.push(copy);
+      this.save();
+      return copy;
+    },
+
     addMember(groupId, name) {
       const g = this.getGroup(groupId);
       if (!g) return null;
@@ -230,6 +276,91 @@
     return group.expenses.reduce((s, e) => s + e.amount, 0);
   }
 
+  /* ---------- 2b. Export / Import ----------
+   * Splitr exports a single group as a JSON document with a format
+   * marker, so unrelated JSON files are rejected cleanly on import.
+   * No conversion / merging is performed — the recipient gets a
+   * snapshot, and conflicts are resolved at the point of import. */
+
+  const EXPORT_FORMAT = 'splitr-group/1';
+
+  function exportGroup(group) {
+    return {
+      splitrFormat: EXPORT_FORMAT,
+      exportedAt: Date.now(),
+      group: {
+        id: group.id,
+        name: group.name,
+        createdAt: group.createdAt,
+        members: group.members.map(m => ({ id: m.id, name: m.name })),
+        expenses: group.expenses.map(e => ({
+          id: e.id,
+          description: e.description,
+          amount: e.amount,
+          paidBy: e.paidBy,
+          createdAt: e.createdAt,
+        })),
+      },
+    };
+  }
+
+  function parseImport(text) {
+    let data;
+    try { data = JSON.parse(text); }
+    catch { throw new Error('Not a valid JSON file'); }
+    if (!data || data.splitrFormat !== EXPORT_FORMAT || !data.group) {
+      throw new Error('Not a Splitr export file');
+    }
+    return data.group;
+  }
+
+  // Defensive normalisation: trims, coerces, drops malformed entries.
+  // Returns null if the group can't be salvaged.
+  function sanitizeImportedGroup(raw) {
+    if (!raw || typeof raw !== 'object') return null;
+    const id = typeof raw.id === 'string' && raw.id ? raw.id : uid();
+    const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+    if (!name) return null;
+    const createdAt = Number.isFinite(raw.createdAt) ? raw.createdAt : Date.now();
+
+    const members = Array.isArray(raw.members) ? raw.members : [];
+    const cleanMembers = [];
+    const seenMemberIds = new Set();
+    for (const m of members) {
+      if (!m || typeof m !== 'object') continue;
+      const mid = typeof m.id === 'string' && m.id ? m.id : uid();
+      if (seenMemberIds.has(mid)) continue;
+      const mname = typeof m.name === 'string' ? m.name.trim() : '';
+      if (!mname) continue;
+      seenMemberIds.add(mid);
+      cleanMembers.push({ id: mid, name: mname });
+    }
+
+    const expenses = Array.isArray(raw.expenses) ? raw.expenses : [];
+    const cleanExpenses = [];
+    const seenExpenseIds = new Set();
+    for (const e of expenses) {
+      if (!e || typeof e !== 'object') continue;
+      const eid = typeof e.id === 'string' && e.id ? e.id : uid();
+      if (seenExpenseIds.has(eid)) continue;
+      const desc = typeof e.description === 'string' ? e.description.trim() : '';
+      const amt = Number(e.amount);
+      const paidBy = typeof e.paidBy === 'string' ? e.paidBy : '';
+      const eCreatedAt = Number.isFinite(e.createdAt) ? e.createdAt : Date.now();
+      if (!desc || !Number.isFinite(amt) || amt <= 0) continue;
+      seenExpenseIds.add(eid);
+      cleanExpenses.push({
+        id: eid,
+        description: desc,
+        amount: amt,
+        paidBy,
+        createdAt: eCreatedAt,
+      });
+    }
+
+    return { id, name, createdAt, members: cleanMembers, expenses: cleanExpenses };
+  }
+
   /* ---------- 3. Router ---------- */
   // Routes:
   //   #/                              -> groups list
@@ -275,6 +406,36 @@
   function setHeader(title, { showBack = false } = {}) {
     headerTitle.textContent = title;
     backBtn.hidden = !showBack;
+  }
+
+  // Resolve an imported group into local storage. If the same group id
+  // already exists locally, the user picks between replacing it or
+  // keeping both (imported as a new copy with fresh ids).
+  function handleGroupImport(incoming) {
+    const existing = Store.getGroup(incoming.id);
+    if (existing) {
+      const replace = window.confirm(
+        `You already have "${existing.name}".\n\n` +
+        'OK = Replace your local copy with the imported one.\n' +
+        'Cancel = Keep both — import as a separate "(imported)" group.'
+      );
+      if (replace) {
+        const saved = Store.replaceGroup(incoming);
+        if (!saved) { toast('Import failed: file is malformed'); return; }
+        toast('Group replaced from import');
+        Router.go(`/group/${saved.id}`);
+      } else {
+        const copy = Store.addGroupAsCopy(incoming);
+        if (!copy) { toast('Import failed: file is malformed'); return; }
+        toast('Imported as new copy');
+        Router.go(`/group/${copy.id}`);
+      }
+    } else {
+      const saved = Store.replaceGroup(incoming);
+      if (!saved) { toast('Import failed: file is malformed'); return; }
+      toast('Group imported');
+      Router.go(`/group/${saved.id}`);
+    }
   }
 
   function render() {
@@ -328,6 +489,40 @@
     });
     card.appendChild(form);
     wrap.appendChild(card);
+
+    // Import a group
+    wrap.appendChild(el('div', { class: 'section-title' }, 'Or import a group'));
+    const importCard = el('div', { class: 'card' });
+    const importIntro = el('p', { class: 'muted', style: 'margin: 0 0 12px; font-size: 13px;' },
+      'Got a Splitr export from someone? Import their JSON file to add the group locally — you can edit your own copy from there.');
+    const fileInput = el('input', {
+      type: 'file',
+      accept: 'application/json,.json',
+      'aria-hidden': 'true',
+      style: 'position:absolute; left:-9999px;',
+    });
+    const importBtn = el('button', { type: 'button', class: 'btn btn-ghost btn-block' }, 'Import from JSON file');
+    importCard.append(importIntro, importBtn, fileInput);
+    wrap.appendChild(importCard);
+
+    importBtn.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try {
+          const incoming = parseImport(String(reader.result));
+          handleGroupImport(incoming);
+        } catch (err) {
+          toast(err && err.message ? err.message : 'Import failed');
+        } finally {
+          fileInput.value = '';
+        }
+      };
+      reader.onerror = () => { toast('Could not read file'); fileInput.value = ''; };
+      reader.readAsText(file);
+    });
 
     // Group list
     wrap.appendChild(el('div', { class: 'section-title' }, `Your groups${groups.length ? ` (${groups.length})` : ''}`));
@@ -454,6 +649,31 @@
       Router.go(`/group/${group.id}/add`);
     });
     app.appendChild(fab);
+
+    // Share / Export
+    wrap.appendChild(el('div', { class: 'section-title' }, 'Share this group'));
+    const shareCard = el('div', { class: 'card' });
+    const shareIntro = el('p', { class: 'muted', style: 'margin: 0 0 12px; font-size: 13px;' },
+      'Export this group as JSON. Anyone you share it with can import it into Splitr on their device and continue editing their copy.');
+    const dlBtn = el('button', { class: 'btn btn-primary', type: 'button' }, 'Download JSON');
+    const copyBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Copy to clipboard');
+    const shareRow = el('div', { class: 'row' }, dlBtn, copyBtn);
+    shareCard.append(shareIntro, shareRow);
+    wrap.appendChild(shareCard);
+
+    dlBtn.addEventListener('click', () => {
+      const data = exportGroup(group);
+      const filename = `splitr-${slugify(group.name)}-${fileDateStamp()}.json`;
+      downloadJson(filename, data);
+      toast('Group exported');
+    });
+    copyBtn.addEventListener('click', async () => {
+      const data = exportGroup(group);
+      const text = JSON.stringify(data, null, 2);
+      const ok = await copyToClipboard(text);
+      if (ok) toast('Copied to clipboard');
+      else { window.prompt('Copy this JSON manually:', text); }
+    });
 
     // Danger zone — delete group
     const danger = el('div', { class: 'spacer-md' });
@@ -873,6 +1093,57 @@
     try {
       return new Date(ts).toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
     } catch { return ''; }
+  }
+
+  function fileDateStamp(ts = Date.now()) {
+    const d = new Date(ts);
+    const pad = (n) => String(n).padStart(2, '0');
+    return `${d.getFullYear()}${pad(d.getMonth() + 1)}${pad(d.getDate())}`;
+  }
+
+  function slugify(str) {
+    return (str || 'group')
+      .toString()
+      .normalize('NFKD')
+      .replace(/[\u0300-\u036f]/g, '')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '-')
+      .replace(/^-+|-+$/g, '')
+      .slice(0, 40) || 'group';
+  }
+
+  function downloadJson(filename, data) {
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
+
+  async function copyToClipboard(text) {
+    try {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return true;
+      }
+    } catch { /* fall through */ }
+    // Legacy fallback for non-secure contexts (e.g. file://).
+    try {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'absolute';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.select();
+      const ok = document.execCommand('copy');
+      document.body.removeChild(ta);
+      return ok;
+    } catch { return false; }
   }
 
   let _toastTimer;
