@@ -1068,6 +1068,8 @@
   // Custom confirmation modal — replaces native window.confirm() for
   // destructive actions. Returns a Promise<boolean> (true = confirmed).
   // Closes on Escape / backdrop click / Cancel; confirms on Enter.
+  // Renders a centered icon (warning for `danger`, question otherwise),
+  // a title, body copy, and equal-weight action buttons.
   function confirmDialog({
     title,
     body = '',
@@ -1076,6 +1078,10 @@
     danger = false,
   }) {
     return new Promise((resolve) => {
+      // Lock body scroll while the modal is up.
+      const prevOverflow = document.body.style.overflow;
+      document.body.style.overflow = 'hidden';
+
       const backdrop = el('div', {
         class: 'modal-backdrop',
         role: 'dialog',
@@ -1083,8 +1089,16 @@
         'aria-labelledby': 'modalTitle',
       });
       const card = el('div', { class: 'modal-card' });
-      const titleEl = el('h2', { class: 'modal-title', id: 'modalTitle' }, title);
-      card.appendChild(titleEl);
+
+      const iconWrap = el('div', { class: `modal-icon ${danger ? 'danger' : ''}` });
+      iconWrap.innerHTML = danger
+        // alert-triangle
+        ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>'
+        // help-circle
+        : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+      card.appendChild(iconWrap);
+
+      card.appendChild(el('h2', { class: 'modal-title', id: 'modalTitle' }, title));
       if (body) card.appendChild(el('p', { class: 'modal-body' }, body));
 
       const cancelBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, cancelLabel);
@@ -1102,7 +1116,10 @@
         settled = true;
         backdrop.classList.remove('show');
         window.removeEventListener('keydown', onKey);
-        setTimeout(() => backdrop.remove(), 160);
+        setTimeout(() => {
+          backdrop.remove();
+          document.body.style.overflow = prevOverflow;
+        }, 200);
         resolve(result);
       };
       const onKey = (e) => {
