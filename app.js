@@ -655,10 +655,8 @@
     const shareCard = el('div', { class: 'card' });
     const shareIntro = el('p', { class: 'muted', style: 'margin: 0 0 12px; font-size: 13px;' },
       'Export this group as JSON. Anyone you share it with can import it into Splitr on their device and continue editing their copy.');
-    const dlBtn = el('button', { class: 'btn btn-primary', type: 'button' }, 'Download JSON');
-    const copyBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, 'Copy to clipboard');
-    const shareRow = el('div', { class: 'row' }, dlBtn, copyBtn);
-    shareCard.append(shareIntro, shareRow);
+    const dlBtn = el('button', { class: 'btn btn-primary btn-block', type: 'button' }, 'Download JSON');
+    shareCard.append(shareIntro, dlBtn);
     wrap.appendChild(shareCard);
 
     dlBtn.addEventListener('click', () => {
@@ -667,24 +665,27 @@
       downloadJson(filename, data);
       toast('Group exported');
     });
-    copyBtn.addEventListener('click', async () => {
-      const data = exportGroup(group);
-      const text = JSON.stringify(data, null, 2);
-      const ok = await copyToClipboard(text);
-      if (ok) toast('Copied to clipboard');
-      else { window.prompt('Copy this JSON manually:', text); }
-    });
 
     // Danger zone — delete group
     const danger = el('div', { class: 'spacer-md' });
     wrap.appendChild(danger);
     const deleteBtn = el('button', { class: 'btn btn-danger btn-block' }, 'Delete group');
-    deleteBtn.addEventListener('click', () => {
-      if (confirm(`Delete "${group.name}"? This cannot be undone.`)) {
-        Store.deleteGroup(group.id);
-        toast('Group deleted');
-        Router.go('/');
-      }
+    deleteBtn.addEventListener('click', async () => {
+      const expCount = group.expenses.length;
+      const memCount = group.members.length;
+      const ok = await confirmDialog({
+        title: `Delete "${group.name}"?`,
+        body:
+          `This will permanently remove the group along with its ${memCount} member${memCount === 1 ? '' : 's'} and ${expCount} expense${expCount === 1 ? '' : 's'}. ` +
+          'This action cannot be undone.',
+        confirmLabel: 'Delete group',
+        cancelLabel: 'Cancel',
+        danger: true,
+      });
+      if (!ok) return;
+      Store.deleteGroup(group.id);
+      toast('Group deleted');
+      Router.go('/');
     });
     wrap.appendChild(deleteBtn);
   }
@@ -712,7 +713,7 @@
         el('div', { class: 'desc' },
           el('div', { class: 'title' }, e.description),
           el('div', { class: 'meta' },
-            `Paid by ${payer ? payer.name : 'unknown'} · ${formatDate(e.createdAt)}`),
+            `Paid by ${payer ? payer.name : 'unknown'} · ${formatDateTime(e.createdAt)}`),
         ),
         el('div', { class: 'amt' }, formatAmount(e.amount)),
       );
@@ -734,12 +735,18 @@
       });
       del.innerHTML =
         '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6"/><path d="M14 11v6"/><path d="M9 6V4a2 2 0 0 1 2-2h2a2 2 0 0 1 2 2v2"/></svg>';
-      del.addEventListener('click', () => {
-        if (confirm(`Delete "${e.description}"?`)) {
-          Store.deleteExpense(group.id, e.id);
-          toast('Expense deleted');
-          render();
-        }
+      del.addEventListener('click', async () => {
+        const ok = await confirmDialog({
+          title: `Delete "${e.description}"?`,
+          body: `${formatAmount(e.amount)} will be removed from this group's expenses. This can't be undone.`,
+          confirmLabel: 'Delete expense',
+          cancelLabel: 'Cancel',
+          danger: true,
+        });
+        if (!ok) return;
+        Store.deleteExpense(group.id, e.id);
+        toast('Expense deleted');
+        render();
       });
       row.append(editBtn, del);
       list.appendChild(row);
@@ -788,12 +795,18 @@
           'aria-label': `Remove ${m.name}`,
           title: 'Remove',
         }, '×');
-        x.addEventListener('click', (ev) => {
+        x.addEventListener('click', async (ev) => {
           ev.stopPropagation();
-          if (confirm(`Remove ${m.name} from this group?`)) {
-            Store.deleteMember(group.id, m.id);
-            render();
-          }
+          const ok = await confirmDialog({
+            title: `Remove ${m.name}?`,
+            body: 'They will be removed from this group. (Members linked to existing expenses can\'t be removed.)',
+            confirmLabel: 'Remove member',
+            cancelLabel: 'Cancel',
+            danger: true,
+          });
+          if (!ok) return;
+          Store.deleteMember(group.id, m.id);
+          render();
         });
 
         chip.append(nameBtn, x);
@@ -1052,6 +1065,62 @@
     return btn;
   }
 
+  // Custom confirmation modal — replaces native window.confirm() for
+  // destructive actions. Returns a Promise<boolean> (true = confirmed).
+  // Closes on Escape / backdrop click / Cancel; confirms on Enter.
+  function confirmDialog({
+    title,
+    body = '',
+    confirmLabel = 'Confirm',
+    cancelLabel = 'Cancel',
+    danger = false,
+  }) {
+    return new Promise((resolve) => {
+      const backdrop = el('div', {
+        class: 'modal-backdrop',
+        role: 'dialog',
+        'aria-modal': 'true',
+        'aria-labelledby': 'modalTitle',
+      });
+      const card = el('div', { class: 'modal-card' });
+      const titleEl = el('h2', { class: 'modal-title', id: 'modalTitle' }, title);
+      card.appendChild(titleEl);
+      if (body) card.appendChild(el('p', { class: 'modal-body' }, body));
+
+      const cancelBtn = el('button', { class: 'btn btn-ghost', type: 'button' }, cancelLabel);
+      const confirmBtn = el('button', {
+        class: `btn ${danger ? 'btn-danger' : 'btn-primary'}`,
+        type: 'button',
+      }, confirmLabel);
+      card.appendChild(el('div', { class: 'modal-actions' }, cancelBtn, confirmBtn));
+      backdrop.appendChild(card);
+      document.body.appendChild(backdrop);
+
+      let settled = false;
+      const close = (result) => {
+        if (settled) return;
+        settled = true;
+        backdrop.classList.remove('show');
+        window.removeEventListener('keydown', onKey);
+        setTimeout(() => backdrop.remove(), 160);
+        resolve(result);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.preventDefault(); close(false); }
+        else if (e.key === 'Enter') { e.preventDefault(); close(true); }
+      };
+      window.addEventListener('keydown', onKey);
+      backdrop.addEventListener('click', (e) => { if (e.target === backdrop) close(false); });
+      cancelBtn.addEventListener('click', () => close(false));
+      confirmBtn.addEventListener('click', () => close(true));
+
+      requestAnimationFrame(() => {
+        backdrop.classList.add('show');
+        confirmBtn.focus();
+      });
+    });
+  }
+
   function uid() {
     if (crypto && crypto.randomUUID) return crypto.randomUUID();
     return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
@@ -1095,6 +1164,36 @@
     } catch { return ''; }
   }
 
+  // Friendly date + time used on expense rows.
+  // - Same day:        "Today, 3:42 PM"
+  // - Previous day:    "Yesterday, 3:42 PM"
+  // - Same calendar yr: "Mar 15, 3:42 PM"
+  // - Otherwise:       "Mar 15, 2025, 3:42 PM"
+  function formatDateTime(ts) {
+    try {
+      const d = new Date(ts);
+      const now = new Date();
+      const time = d.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+      const isSameDay = (a, b) =>
+        a.getFullYear() === b.getFullYear() &&
+        a.getMonth() === b.getMonth() &&
+        a.getDate() === b.getDate();
+
+      if (isSameDay(d, now)) return `Today, ${time}`;
+
+      const yest = new Date(now);
+      yest.setDate(yest.getDate() - 1);
+      if (isSameDay(d, yest)) return `Yesterday, ${time}`;
+
+      const sameYear = d.getFullYear() === now.getFullYear();
+      const dateStr = d.toLocaleDateString(undefined, sameYear
+        ? { month: 'short', day: 'numeric' }
+        : { month: 'short', day: 'numeric', year: 'numeric' });
+      return `${dateStr}, ${time}`;
+    } catch { return ''; }
+  }
+
   function fileDateStamp(ts = Date.now()) {
     const d = new Date(ts);
     const pad = (n) => String(n).padStart(2, '0');
@@ -1124,27 +1223,6 @@
     setTimeout(() => URL.revokeObjectURL(url), 1000);
   }
 
-  async function copyToClipboard(text) {
-    try {
-      if (navigator.clipboard && window.isSecureContext) {
-        await navigator.clipboard.writeText(text);
-        return true;
-      }
-    } catch { /* fall through */ }
-    // Legacy fallback for non-secure contexts (e.g. file://).
-    try {
-      const ta = document.createElement('textarea');
-      ta.value = text;
-      ta.setAttribute('readonly', '');
-      ta.style.position = 'absolute';
-      ta.style.left = '-9999px';
-      document.body.appendChild(ta);
-      ta.select();
-      const ok = document.execCommand('copy');
-      document.body.removeChild(ta);
-      return ok;
-    } catch { return false; }
-  }
 
   let _toastTimer;
   function toast(msg) {
